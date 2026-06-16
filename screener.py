@@ -1,202 +1,61 @@
 """
-screener.py
------------
-Modul inti untuk logika screening saham berbasis kriteria Value Investing.
-Semua ambang batas (threshold) filter dapat dikonfigurasi melalui SCREENER_CONFIG
-tanpa harus menyentuh logika utama.
+core/screener.py
+----------------
+Logika filter dan scoring Value Investing.
+Semua threshold dikonfigurasi via ScreenerConfig.
 """
 
-import pandas as pd
-import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
-logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# CONFIGURATION - Ubah nilai di sini untuk mengatur threshold filter
-# =============================================================================
 @dataclass
 class ScreenerConfig:
     """
-    Konfigurasi terpusat untuk semua filter Value Investing.
-    Ubah nilai di sini tanpa perlu menyentuh logika screening.
-
-    Semua field bersifat Optional — jika None, filter tersebut dinonaktifkan.
+    Konfigurasi threshold filter Value Investing.
+    Set nilai None untuk menonaktifkan filter tersebut.
     """
-    # --- Valuation Filters ---
-    max_pe_ratio:        Optional[float] = 15.0    # P/E Ratio maksimum
-    max_pb_ratio:        Optional[float] = 1.5     # P/B Ratio maksimum
-
-    # --- Profitability Filters ---
-    min_roe:             Optional[float] = 15.0    # ROE minimum (dalam %)
-
-    # --- Financial Health Filters ---
-    max_debt_to_equity:  Optional[float] = 1.0     # Debt/Equity maksimum
-
-    # --- Size Filters (opsional) ---
-    min_market_cap_b:    Optional[float] = None    # Market Cap minimum (Miliar USD), None = tidak difilter
-
-    # --- Dividend Filter (opsional) ---
-    min_dividend_yield:  Optional[float] = None    # Dividend Yield minimum (%), None = tidak difilter
-
-    # --- Growth Filter (opsional) ---
-    min_revenue_growth:  Optional[float] = None    # Revenue Growth minimum (%), None = tidak difilter
+    max_pe:    Optional[float] = 15.0
+    max_pb:    Optional[float] = 1.5
+    min_roe:   Optional[float] = 15.0
+    max_de:    Optional[float] = 1.0
+    min_mktcap: Optional[float] = None   # Miliar USD
 
 
-# Instance default yang digunakan oleh fungsi screening
-DEFAULT_CONFIG = ScreenerConfig()
-
-
-# =============================================================================
-# SCORING ENGINE - Memberikan skor komposit untuk ranking saham
-# =============================================================================
-
-def compute_value_score(row: pd.Series) -> float:
+def compute_score(s: dict) -> float:
     """
-    Menghitung skor komposit Value Investing untuk satu baris data saham.
-    Skor lebih tinggi = saham lebih menarik secara value.
-
-    Formula:
-        - P/E rendah  → skor tinggi
-        - P/B rendah  → skor tinggi
-        - ROE tinggi  → skor tinggi
-        - D/E rendah  → skor tinggi
-
-    Parameters
-    ----------
-    row : pd.Series
-        Satu baris dari DataFrame hasil fetch.
-
-    Returns
-    -------
-    float
-        Skor komposit (0–100 scale approximation).
+    Skor komposit 0–100. Lebih tinggi = lebih undervalued.
+    Bobot: ROE 30%, P/E 25%, P/B 25%, D/E 20%
     """
     score = 0.0
+    pe  = s.get("pe")
+    pb  = s.get("pb")
+    roe = s.get("roe")
+    de  = s.get("de")
 
-    try:
-        pe  = row.get("P/E Ratio")
-        pb  = row.get("P/B Ratio")
-        roe = row.get("ROE (%)")
-        de  = row.get("Debt/Equity")
+    if pe  and pe  > 0: score += max(0, (50 - pe)  / 50) * 25
+    if pb  and pb  > 0: score += max(0, (5  - pb)  / 5)  * 25
+    if roe is not None: score += min(roe / 50, 1.0)       * 30
+    if de  is not None: score += max(0, (3  - de)  / 3)  * 20
 
-        # P/E: semakin rendah semakin baik (cap di 50 untuk normalisasi)
-        if pe and pe > 0:
-            score += max(0, (50 - pe) / 50) * 25
-
-        # P/B: semakin rendah semakin baik (cap di 5)
-        if pb and pb > 0:
-            score += max(0, (5 - pb) / 5) * 25
-
-        # ROE: semakin tinggi semakin baik (cap di 50%)
-        if roe is not None:
-            score += min(roe / 50, 1.0) * 30
-
-        # D/E: semakin rendah semakin baik (cap di 3)
-        if de is not None:
-            score += max(0, (3 - de) / 3) * 20
-
-    except Exception as e:
-        logger.debug(f"Tidak bisa menghitung skor untuk {row.get('Ticker', '?')}: {e}")
-
-    return round(score, 2)
+    return round(score, 1)
 
 
-# =============================================================================
-# MAIN SCREENING LOGIC
-# =============================================================================
-
-def apply_filters(df: pd.DataFrame, config: ScreenerConfig = DEFAULT_CONFIG) -> pd.DataFrame:
+def apply_filters(data: list[dict],
+                  cfg: ScreenerConfig) -> list[dict]:
     """
-    Memfilter DataFrame saham berdasarkan kriteria Value Investing dari config.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame hasil dari data_fetcher.fetch_multiple_tickers()
-    config : ScreenerConfig
-        Objek konfigurasi berisi threshold filter.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame yang sudah difilter, diurutkan berdasarkan Value Score (tertinggi dulu).
+    Filter list saham berdasarkan cfg.
+    Return list diurutkan berdasarkan Value Score (tertinggi dulu).
     """
-    if df.empty:
-        logger.warning("DataFrame kosong, tidak ada yang bisa difilter.")
-        return df
+    out = []
+    for s in data:
+        if cfg.max_pe    is not None and (s.get("pe")     is None or s["pe"]     > cfg.max_pe):    continue
+        if cfg.max_pb    is not None and (s.get("pb")     is None or s["pb"]     > cfg.max_pb):    continue
+        if cfg.min_roe   is not None and (s.get("roe")    is None or s["roe"]    < cfg.min_roe):   continue
+        if cfg.max_de    is not None and (s.get("de")     is None or s["de"]     > cfg.max_de):    continue
+        if cfg.min_mktcap is not None and (s.get("mktcap") is None or s["mktcap"] < cfg.min_mktcap): continue
 
-    filtered = df.copy()
-    initial_count = len(filtered)
+        scored = {**s, "score": compute_score(s)}
+        out.append(scored)
 
-    # Definisikan semua filter yang akan diterapkan
-    filter_rules = [
-        ("P/E Ratio",      config.max_pe_ratio,        "<="),
-        ("P/B Ratio",      config.max_pb_ratio,        "<="),
-        ("ROE (%)",        config.min_roe,             ">="),
-        ("Debt/Equity",    config.max_debt_to_equity,  "<="),
-        ("Market Cap (B)", config.min_market_cap_b,    ">="),
-        ("Dividend Yield (%)", config.min_dividend_yield, ">="),
-        ("Revenue Growth (%)", config.min_revenue_growth, ">="),
-    ]
-
-    for col, threshold, operator in filter_rules:
-        if threshold is None:
-            continue  # Filter dinonaktifkan
-        if col not in filtered.columns:
-            logger.warning(f"Kolom '{col}' tidak ditemukan, filter dilewati.")
-            continue
-
-        before = len(filtered)
-
-        # Hapus baris dengan nilai NaN di kolom yang difilter
-        filtered = filtered.dropna(subset=[col])
-
-        if operator == "<=":
-            filtered = filtered[filtered[col] <= threshold]
-        elif operator == ">=":
-            filtered = filtered[filtered[col] >= threshold]
-
-        after = len(filtered)
-        logger.info(f"Filter [{col} {operator} {threshold}]: {before} → {after} saham")
-
-    # Tambahkan kolom Value Score untuk ranking
-    if not filtered.empty:
-        filtered["Value Score"] = filtered.apply(compute_value_score, axis=1)
-        filtered = filtered.sort_values("Value Score", ascending=False)
-        filtered = filtered.reset_index(drop=True)
-        filtered.index += 1  # Mulai index dari 1 (Rank)
-        filtered.index.name = "Rank"
-
-    final_count = len(filtered)
-    logger.info(
-        f"Screening selesai: {initial_count} ticker masuk → {final_count} lolos filter."
-    )
-
-    return filtered
-
-
-def get_filter_summary(config: ScreenerConfig) -> dict:
-    """
-    Menghasilkan ringkasan filter yang aktif untuk ditampilkan di dashboard.
-
-    Parameters
-    ----------
-    config : ScreenerConfig
-
-    Returns
-    -------
-    dict
-        Dictionary berisi nama filter dan nilai threshold-nya.
-    """
-    return {
-        "P/E Ratio ≤":          config.max_pe_ratio,
-        "P/B Ratio ≤":          config.max_pb_ratio,
-        "ROE (%) ≥":            config.min_roe,
-        "Debt/Equity ≤":        config.max_debt_to_equity,
-        "Market Cap (B) ≥":     config.min_market_cap_b,
-        "Dividend Yield (%) ≥": config.min_dividend_yield,
-        "Revenue Growth (%) ≥": config.min_revenue_growth,
-    }
+    return sorted(out, key=lambda x: x["score"], reverse=True)

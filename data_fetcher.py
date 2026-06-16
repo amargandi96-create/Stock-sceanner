@@ -1,129 +1,89 @@
 """
-data_fetcher.py
----------------
-Modul untuk mengambil data fundamental saham dari Yahoo Finance menggunakan yfinance.
-Dirancang untuk digunakan sebagai bagian dari sistem Value Investing Stock Screener.
+core/data_fetcher.py
+--------------------
+Modul pengambilan data fundamental saham dari Yahoo Finance.
+Kompatibel dengan Android via yfinance.
 """
 
 import yfinance as yf
-import pandas as pd
 import logging
-from typing import Optional
 
-# Setup logging untuk debugging dan monitoring
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# FIELD MAPPING - Pemetaan field dari yfinance ke nama kolom sistem kita
-# =============================================================================
-FUNDAMENTAL_FIELDS = {
-    "trailingPE":          "P/E Ratio",
-    "priceToBook":         "P/B Ratio",
-    "returnOnEquity":      "ROE (%)",
-    "debtToEquity":        "Debt/Equity",
-    "marketCap":           "Market Cap (B)",
-    "currentPrice":        "Price",
-    "sector":              "Sector",
-    "shortName":           "Company",
-    "dividendYield":       "Dividend Yield (%)",
-    "revenueGrowth":       "Revenue Growth (%)",
-    "grossMargins":        "Gross Margin (%)",
+# Mapping field yfinance → nama tampilan
+FIELD_MAP = {
+    "trailingPE":     "pe",
+    "priceToBook":    "pb",
+    "returnOnEquity": "roe",        # desimal → kita kalikan 100
+    "debtToEquity":   "de",
+    "marketCap":      "mktcap",     # raw bytes → dibagi 1e9
+    "currentPrice":   "price",
+    "shortName":      "company",
+    "sector":         "sector",
+    "dividendYield":  "div_yield",  # desimal → kali 100
+    "revenueGrowth":  "rev_growth", # desimal → kali 100
+    "grossMargins":   "gross_margin",
+    "trailingEps":    "eps",
 }
 
+PCT_FIELDS  = {"roe", "div_yield", "rev_growth", "gross_margin"}
+ROUND2      = {"pe", "pb", "de", "price", "eps"}
 
-def fetch_ticker_info(ticker: str) -> Optional[dict]:
+
+def fetch_ticker(ticker: str) -> dict | None:
     """
-    Mengambil data fundamental untuk satu ticker dari Yahoo Finance.
-
-    Parameters
-    ----------
-    ticker : str
-        Simbol saham (contoh: 'AAPL', 'BBCA.JK')
-
-    Returns
-    -------
-    dict | None
-        Dictionary berisi data fundamental, atau None jika gagal.
+    Ambil data fundamental satu ticker.
+    Return dict atau None jika gagal.
     """
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-
-        # Validasi: pastikan data tidak kosong
-        if not info or info.get("regularMarketPrice") is None and info.get("currentPrice") is None:
-            logger.warning(f"[{ticker}] Data tidak tersedia atau ticker tidak valid.")
+        info = yf.Ticker(ticker).info
+        if not info or ("currentPrice" not in info and "regularMarketPrice" not in info):
+            logger.warning(f"[{ticker}] Data tidak tersedia.")
             return None
 
-        result = {"Ticker": ticker.upper()}
-
-        for yf_field, display_name in FUNDAMENTAL_FIELDS.items():
-            raw_value = info.get(yf_field)
-
-            # Normalisasi nilai persentase (yfinance mengembalikan desimal, ubah ke %)
-            if display_name in ("ROE (%)", "Dividend Yield (%)", "Revenue Growth (%)", "Gross Margin (%)"):
-                result[display_name] = round(raw_value * 100, 2) if raw_value is not None else None
-            # Normalisasi Market Cap ke Miliar
-            elif display_name == "Market Cap (B)":
-                result[display_name] = round(raw_value / 1e9, 2) if raw_value is not None else None
+        result = {"ticker": ticker.upper()}
+        for yf_key, our_key in FIELD_MAP.items():
+            val = info.get(yf_key)
+            if val is None:
+                result[our_key] = None
+                continue
+            if our_key in PCT_FIELDS:
+                result[our_key] = round(val * 100, 2)
+            elif our_key == "mktcap":
+                result[our_key] = round(val / 1e9, 2)
+            elif our_key in ROUND2 or isinstance(val, float):
+                result[our_key] = round(val, 2)
             else:
-                result[display_name] = round(raw_value, 2) if isinstance(raw_value, float) else raw_value
+                result[our_key] = val
 
-        logger.info(f"[{ticker}] Data berhasil diambil.")
+        logger.info(f"[{ticker}] OK")
         return result
 
     except Exception as e:
-        logger.error(f"[{ticker}] Gagal mengambil data: {e}")
+        logger.error(f"[{ticker}] Error: {e}")
         return None
 
 
-def fetch_multiple_tickers(tickers: list[str]) -> pd.DataFrame:
+def fetch_multiple(tickers: list[str],
+                   on_progress=None) -> tuple[list[dict], list[str]]:
     """
-    Mengambil data fundamental untuk banyak ticker sekaligus.
-
-    Parameters
-    ----------
-    tickers : list[str]
-        Daftar simbol saham.
+    Ambil data banyak ticker. Memanggil callback on_progress(done, total)
+    setelah setiap ticker selesai (untuk update progress bar di UI).
 
     Returns
     -------
-    pd.DataFrame
-        DataFrame berisi data fundamental semua ticker yang berhasil diambil.
-        Ticker yang gagal akan dilewati dengan log peringatan.
+    (data_list, failed_list)
     """
-    all_data = []
-    failed_tickers = []
+    results, failed = [], []
+    total = len(tickers)
 
-    logger.info(f"Memulai pengambilan data untuk {len(tickers)} ticker...")
-
-    for ticker in tickers:
-        data = fetch_ticker_info(ticker.strip().upper())
+    for i, ticker in enumerate(tickers, 1):
+        data = fetch_ticker(ticker.strip().upper())
         if data:
-            all_data.append(data)
+            results.append(data)
         else:
-            failed_tickers.append(ticker)
+            failed.append(ticker)
+        if on_progress:
+            on_progress(i, total)
 
-    if failed_tickers:
-        logger.warning(f"Ticker yang gagal diambil datanya: {failed_tickers}")
-
-    if not all_data:
-        logger.error("Tidak ada data yang berhasil diambil dari semua ticker.")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(all_data)
-
-    # Atur urutan kolom agar mudah dibaca
-    column_order = [
-        "Ticker", "Company", "Sector", "Price",
-        "P/E Ratio", "P/B Ratio", "ROE (%)", "Debt/Equity",
-        "Market Cap (B)", "Dividend Yield (%)", "Revenue Growth (%)", "Gross Margin (%)"
-    ]
-    df = df.reindex(columns=[c for c in column_order if c in df.columns])
-
-    logger.info(f"Pengambilan data selesai. {len(all_data)} ticker berhasil, {len(failed_tickers)} gagal.")
-    return df
+    return results, failed
