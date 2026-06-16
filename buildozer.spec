@@ -24,6 +24,8 @@ android.minapi = 21
 android.ndk = 25b
 android.sdk = 33
 android.api = 33
+android.accept_sdk_license = True
+android.build_tools_version = 33.0.2
 android.archs = arm64-v8a, armeabi-v7a
 
 # Izin yang dibutuhkan
