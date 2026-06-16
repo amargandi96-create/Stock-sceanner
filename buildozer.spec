@@ -14,7 +14,7 @@ source.include_exts = py,png,jpg,kv,atlas
 version = 1.0
 
 # Dependensi Python yang dibutuhkan
-requirements = python3,kivy==2.3.0,yfinance,pandas,numpy,requests,urllib3,certifi,charset-normalizer,idna,multitasking,lxml,beautifulsoup4,frozendict,peewee
+requirements = python3,kivy==2.3.0,requests,urllib3,certifi,charset-normalizer,idna
 
 # Orientasi layar
 orientation = portrait
