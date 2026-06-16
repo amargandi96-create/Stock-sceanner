@@ -21,13 +21,11 @@ jobs:
           pip install buildozer cython
           sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip libffi-dev libssl-dev
 
-      - name: Install Android SDK Build Tools
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "build-tools;37.0.0"
-
       - name: Build APK
-        run: buildozer android debug
+        run: |
+          yes | buildozer android debug
+        env:
+          ACCEPT_SDK_LICENSES: "yes"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
