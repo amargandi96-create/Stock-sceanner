@@ -2,43 +2,71 @@
 core/data_fetcher.py
 --------------------
 Modul pengambilan data fundamental saham dari Yahoo Finance.
-Kompatibel dengan Android via yfinance.
+Menggunakan requests langsung (tanpa yfinance/pandas/numpy).
 """
 
-import yfinance as yf
+import json
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
-# Mapping field yfinance → nama tampilan
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+}
+
+PCT_FIELDS   = {"roe", "div_yield", "rev_growth", "gross_margin"}
+ROUND2       = {"pe", "pb", "de", "price", "eps"}
+
 FIELD_MAP = {
     "trailingPE":     "pe",
     "priceToBook":    "pb",
-    "returnOnEquity": "roe",        # desimal → kita kalikan 100
+    "returnOnEquity": "roe",
     "debtToEquity":   "de",
-    "marketCap":      "mktcap",     # raw bytes → dibagi 1e9
+    "marketCap":      "mktcap",
     "currentPrice":   "price",
     "shortName":      "company",
     "sector":         "sector",
-    "dividendYield":  "div_yield",  # desimal → kali 100
-    "revenueGrowth":  "rev_growth", # desimal → kali 100
+    "dividendYield":  "div_yield",
+    "revenueGrowth":  "rev_growth",
     "grossMargins":   "gross_margin",
     "trailingEps":    "eps",
 }
 
-PCT_FIELDS  = {"roe", "div_yield", "rev_growth", "gross_margin"}
-ROUND2      = {"pe", "pb", "de", "price", "eps"}
-
 
 def fetch_ticker(ticker: str) -> dict | None:
     """
-    Ambil data fundamental satu ticker.
+    Ambil data fundamental satu ticker dari Yahoo Finance API.
     Return dict atau None jika gagal.
     """
     try:
-        info = yf.Ticker(ticker).info
-        if not info or ("currentPrice" not in info and "regularMarketPrice" not in info):
+        url = (
+            f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+            f"?modules=summaryDetail,defaultKeyStatistics,financialData,assetProfile,price"
+        )
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp.raise_for_status()
+
+        data = resp.json()
+        qs   = data.get("quoteSummary", {})
+        if qs.get("error") or not qs.get("result"):
             logger.warning(f"[{ticker}] Data tidak tersedia.")
+            return None
+
+        # Gabungkan semua modul jadi satu dict datar
+        info = {}
+        for module in qs["result"][0].values():
+            if isinstance(module, dict):
+                for k, v in module.items():
+                    # Yahoo v10 membungkus nilai dalam {"raw": ..., "fmt": ...}
+                    if isinstance(v, dict) and "raw" in v:
+                        info[k] = v["raw"]
+                    else:
+                        info[k] = v
+
+        if "currentPrice" not in info and "regularMarketPrice" not in info:
+            logger.warning(f"[{ticker}] Tidak ada harga.")
             return None
 
         result = {"ticker": ticker.upper()}
@@ -47,6 +75,12 @@ def fetch_ticker(ticker: str) -> dict | None:
             if val is None:
                 result[our_key] = None
                 continue
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                result[our_key] = val
+                continue
+
             if our_key in PCT_FIELDS:
                 result[our_key] = round(val * 100, 2)
             elif our_key == "mktcap":
@@ -67,12 +101,8 @@ def fetch_ticker(ticker: str) -> dict | None:
 def fetch_multiple(tickers: list[str],
                    on_progress=None) -> tuple[list[dict], list[str]]:
     """
-    Ambil data banyak ticker. Memanggil callback on_progress(done, total)
-    setelah setiap ticker selesai (untuk update progress bar di UI).
-
-    Returns
-    -------
-    (data_list, failed_list)
+    Ambil data banyak ticker.
+    Returns (data_list, failed_list)
     """
     results, failed = [], []
     total = len(tickers)
