@@ -19,8 +19,8 @@ from kivy.clock import Clock
 from kivy.graphics import Color, RoundedRectangle
 from kivy.metrics import dp, sp
 
-from core.data_fetcher import fetch_multiple
-from core.screener import ScreenerConfig, apply_filters
+from data_fetcher import fetch_multiple
+from screener import ScreenerConfig, apply_filters
 
 # ── Warna tema ──────────────────────────────────────────────────────────────
 C_BG       = (0.06, 0.09, 0.16, 1)
