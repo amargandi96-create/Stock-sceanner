@@ -15,10 +15,9 @@ from kivy.utils import platform
 if platform != "android":
     Window.size = (400, 700)
 
-from screens.home_screen import HomeScreen
-from screens.result_screen import ResultScreen
-from screens.detail_screen import DetailScreen
-
+from home_screen import HomeScreen
+from result_screen import ResultScreen
+from detail_screen import DetailScreen
 
 class StockScreenerApp(App):
     """
