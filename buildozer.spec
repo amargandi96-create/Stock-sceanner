@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 version = 1.0
 
-requirements = python3,kivy==2.3.0,requests,urllib3,certifi,charset-normalizer,idna
+requirements = python3,kivy,requests,urllib3,certifi,charset-normalizer,idna
 
 orientation = portrait
 
