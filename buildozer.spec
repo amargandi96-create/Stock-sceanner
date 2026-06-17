@@ -12,7 +12,7 @@ orientation = portrait
 
 android.minapi = 21
 android.api = 33
-android.ndk = 25.2.9519653
+android.ndk = 28c
 android.accept_sdk_license = True
 android.build_tools_version = 33.0.2
 android.archs = arm64-v8a
